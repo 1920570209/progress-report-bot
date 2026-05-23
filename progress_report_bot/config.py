@@ -164,6 +164,23 @@ class Config:
                 out[k] = v
         return out
 
+    def list_container_repo_paths(self) -> list:
+        """LOCAL_GIT_REPO_ROOT 下所有含 .git 的子目录（容器模式全量扫描用）。"""
+        root = self.local_git_repo_root.strip()
+        if not root:
+            return []
+        root_path = Path(root)
+        if not root_path.exists():
+            return []
+        paths: list = []
+        try:
+            for child in sorted(root_path.iterdir()):
+                if child.is_dir() and (child / ".git").exists():
+                    paths.append(str(child.resolve()))
+        except OSError:
+            pass
+        return paths
+
     def resolve_repo_paths(self, repo_ids: list) -> list:
         """把工作项的 repos 字段（short code 列表）映射到本地仓库路径列表。
 
@@ -216,3 +233,8 @@ class Config:
             raise RuntimeError(
                 "缺少必需的飞书项目配置: " + ", ".join(missing) + "（请检查 .env）"
             )
+
+    def require_token(self) -> None:
+        """ping/projects/types/carriers 等发现类命令只需要 token。"""
+        if not self.meego_mcp_token:
+            raise RuntimeError("缺少必需配置: MEEGO_MCP_TOKEN（请检查 .env）")

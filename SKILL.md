@@ -27,158 +27,210 @@ enrichment cross-checks Feishu state with real commits / MRs.
 - User asks to auto-transition Feishu workflow when PR merged to test branch
 - User mentions Meego, 飞书项目, project.feishu.cn MCP
 
-## Quick Start (what the agent should do)
+## Agent interaction contract (IMPORTANT)
 
-Follow these steps in order. **Do NOT spawn the interactive `init` wizard** —
-that's a human-oriented CLI. As an AI agent with file-write capability, write
-`.env` directly.
+**All configuration choices happen in the Cursor chat — NOT in a local terminal
+wizard.** Do NOT run `python -m progress_report_bot init` for end users.
+
+The user only **types** one secret by hand: **`MEEGO_MCP_TOKEN`**. Every other
+parameter is presented as a **numbered list in chat**; the user replies with a
+number (or "skip").
 
 ### Step 1 — pick the working directory
 
-`cd` into the user's project directory (the one whose git history / Feishu
-space the user wants reported on). This is where `.env` and `data/` live.
+`cd` into the directory the user wants analyzed. This is where `.env` and `data/`
+live.
 
-### Step 2 — make sure `.env` exists
+**Git container rule:** if cwd has **one or more child directories each
+containing `.git`**, treat cwd as a monorepo container — set
+`LOCAL_GIT_REPO_ROOT=<cwd>` and scan **all** sub-repos (do not pick just one).
+If cwd itself is the only git repo, use `LOCAL_GIT_REPO_PATH=<cwd>`.
 
-Read `./.env` in cwd. If it exists with `MEEGO_MCP_TOKEN` and
-`MEEGO_PROJECT_KEY` filled in, skip to Step 3.
+Detect by listing cwd (no command needed):
 
-If it's missing or required fields are blank:
+| cwd shape | `.env` git settings |
+|---|---|
+| ≥1 child dirs with `.git` | `GIT_PROVIDER=local`, `LOCAL_GIT_REPO_ROOT=<cwd>` |
+| cwd itself has `.git`, no sub-repos | `GIT_PROVIDER=local`, `LOCAL_GIT_REPO_PATH=<cwd>` |
+| no git | `GIT_PROVIDER=none` |
 
-1. **Ask the user (in one batched question)** for the missing values:
-   - `MEEGO_MCP_TOKEN` (required) — from Feishu Project → settings → MCP
-   - `MEEGO_PROJECT_KEY` (required) — Feishu space key (24-char hex)
-   - `MEEGO_REPORT_CARRIER_ID` (optional) — workitem id to receive the comment;
-     leave blank if the user only wants local md
-   - `DEFAULT_SCOPE` (optional, default `mine`) — `mine` / `project` / `all`
-   - `MEEGO_SCAN_TYPES` (only if scope=project|all, default `执行需求`)
-2. **Detect git form by listing cwd** (no need to run a command):
-   - ≥2 child dirs each containing `.git` → `GIT_PROVIDER=local` + `LOCAL_GIT_REPO_ROOT=<cwd>`
-   - cwd itself contains `.git` → `GIT_PROVIDER=local` + `LOCAL_GIT_REPO_PATH=<cwd>`
-   - otherwise → `GIT_PROVIDER=none`
-3. **Write `./.env`** using the file-write tool. Template:
+When `LOCAL_GIT_REPO_ROOT` is set, git enrich scans **every** sub-repo under
+that root (even if a workitem's「选择仓库」field is empty).
+
+### Step 2 — ask ONLY for the token, then discover the rest
+
+1. **Ask the user once:** `MEEGO_MCP_TOKEN` (Feishu Project → settings → MCP).
+2. Write a minimal `./.env` with just the token (+ default URL):
    ```env
    MEEGO_MCP_URL=https://project.feishu.cn/mcp_server/v1
    MEEGO_MCP_TOKEN=<from user>
-   MEEGO_PROJECT_KEY=<from user>
-   MEEGO_REPORT_CARRIER_ID=<from user or blank>
-   MEEGO_REPORT_CARRIER_TYPE_KEY=684a81a489c47be26942c57e
-   DEFAULT_SCOPE=<mine|project|all>
-   MEEGO_SCAN_TYPES=执行需求
-   GIT_PROVIDER=<local|none>
-   LOCAL_GIT_REPO_PATH=<cwd if single repo>
-   LOCAL_GIT_REPO_ROOT=<cwd if container>
-   LOCAL_GIT_REMOTE_PREFIX=origin/
-   MERGE_TARGET_BRANCHES=test
-   SYNC_SOURCE_NODE_NAME=功能开发
-   SYNC_TARGET_NODE_NAMES=功能测试,提测,测试中
-   SYNC_BRANCH_WHITELIST=
-   REPORT_WINDOW_DAYS=7
+   ```
+3. Verify:
+   ```bash
+   python -m progress_report_bot ping
    ```
 
-### Step 3 — verify connectivity (5 sec)
-
-Run once, abort if it fails:
+### Step 3 — let the user pick the project (in chat)
 
 ```bash
-python -m progress_report_bot ping
+python -m progress_report_bot projects --json
 ```
 
-### Step 4 — generate the report locally (safe, no Feishu write)
+Parse the JSON array. Present a **numbered list** in chat, e.g.:
+
+```
+请选择飞书项目空间：
+1. XX产品 (key=abc..., simple=xx)
+2. YY迭代 (key=def..., simple=yy)
+```
+
+Wait for the user's reply. Then patch `.env` with `MEEGO_PROJECT_KEY` and
+`MEEGO_SPACE_SIMPLE_NAME`.
+
+### Step 4 — let the user pick scope (in chat)
+
+Present options (default = 1):
+
+```
+请选择采集范围：
+1. mine — 只看本人参与的工作项（快）
+2. project — 扫整个空间（老板周报视角）
+3. all — 本人 + 全空间合并
+```
+
+Write `DEFAULT_SCOPE` to `.env`.
+
+If user picks **project** or **all**, also let them pick workitem types:
+
+```bash
+python -m progress_report_bot types --project-key <key> --json
+```
+
+Present numbered list → write `MEEGO_SCAN_TYPES` (comma-sep type names).
+
+### Step 5 — generate report locally (safe, no Feishu write)
+
+Finish `.env` with git auto-detection (Step 1) and defaults:
+
+```env
+MEEGO_REPORT_CARRIER_ID=
+MEEGO_REPORT_CARRIER_TYPE_KEY=
+MERGE_TARGET_BRANCHES=test
+SYNC_SOURCE_NODE_NAME=功能开发
+SYNC_TARGET_NODE_NAMES=功能测试,提测,测试中
+SYNC_BRANCH_WHITELIST=
+REPORT_WINDOW_DAYS=7
+LOCAL_GIT_REMOTE_PREFIX=origin/
+```
+
+Run:
 
 ```bash
 python -m progress_report_bot run-all
 ```
 
-Then **read `data/report.md` and `data/diff.md`** and reply to the user with:
+Read `data/report.md` and `data/diff.md`. Reply with:
 
-- the one-line headline (completion %, delayed count, risk count)
-- top 3 🔴 critical discrepancies if any
-- 3-5 most relevant `@`-mentioned owners
+- one-line headline (completion %, delayed count, risk count)
+- top 3 critical discrepancies if any
+- 3–5 most relevant `@`-mentioned owners
 
-Do NOT paste the full markdown unless asked.
+Do NOT paste full markdown unless asked.
 
-### Step 5 — only if user explicitly asks "post it / push to Feishu"
+### Step 6 — push to Feishu comment (only on explicit request)
 
-```bash
-python -m progress_report_bot run-all --apply
-```
+Require explicit "post" / "send" / "推送" / "发评论" in **this turn**.
 
-Confirm again before running `--apply`. Never assume permission from "looks
-good" — require an explicit "post" / "send" / "推送" / "发评论".
+**Do NOT run `--apply` until the user also picks a carrier workitem in chat.**
 
-## Two run modes (auto-selected by `init`)
+1. Fetch candidates (only workitems **this user participates in**):
 
-- **Pure Feishu mode** (default fallback, `GIT_PROVIDER=none`): analyzes
-  workitem flow, owners, delays, stagnant nodes only. No git needed.
-- **Git-enhanced mode** (`GIT_PROVIDER=local|gitlab|github`): adds
-  commits/MR verification, detects 假完成 / 状态滞后, enables `sync` for
-  auto-transitioning Feishu nodes when MR merged to test branch.
+   ```bash
+   python -m progress_report_bot carriers --project-key <key> --json
+   ```
 
-`init` picks the right mode:
+2. Present numbered list in chat:
 
-| cwd shape | result |
-|---|---|
-| cwd has ≥2 git subdirs (monorepo container) | `local` + `LOCAL_GIT_REPO_ROOT` |
-| cwd itself is a git repo | `local` + `LOCAL_GIT_REPO_PATH` |
-| no git anywhere | `none` (pure Feishu mode) |
+   ```
+   请选择接收周报评论的工作项（仅列出你参与的）：
+   1. #12345 [功能开发] 版本 V5.485 周报承载
+   2. #67890 [测试中] 迭代总结
+   0. 跳过（只保留本地 md）
+   ```
+
+3. After user picks, patch `.env`:
+
+   ```env
+   MEEGO_REPORT_CARRIER_ID=<id>
+   MEEGO_REPORT_CARRIER_TYPE_KEY=<type_key from JSON>
+   ```
+
+4. Confirm once more, then:
+
+   ```bash
+   python -m progress_report_bot run-all --apply
+   ```
+
+Never use `--select-carrier` (terminal interactive) in Agent mode — always
+present choices in chat and write `.env`.
+
+## Two run modes (auto-detected, no init wizard)
+
+- **Pure Feishu mode** (`GIT_PROVIDER=none`): workitem flow, owners, delays only.
+- **Git-enhanced mode** (`GIT_PROVIDER=local|gitlab|github`): adds commit/MR
+  cross-check, `fake_done` / `lag` detection, and `sync` for node transitions.
 
 ## Commands the agent may run
 
-All commands are safe-by-default. Anything that writes to Feishu requires
-`--apply`; without it the command only writes local `data/*.md` files.
+Safe by default. Feishu writes need `--apply` + user confirmation.
 
 ```bash
-python -m progress_report_bot init                  # one-time wizard, writes ./.env
-python -m progress_report_bot ping                  # verify MCP connectivity
-python -m progress_report_bot run-all               # local report only (safe, scope=mine)
-python -m progress_report_bot run-all --apply       # also post comment to Feishu
-python -m progress_report_bot run-all --scope project   # ★ scan whole project (all members)
-python -m progress_report_bot diff                  # just the discrepancy report
-python -m progress_report_bot sync                  # preview workflow transitions (git mode only)
-python -m progress_report_bot sync --apply          # actually transition nodes
-python -m progress_report_bot repos                 # diagnose short-code → repo mapping (monorepo)
-python -m progress_report_bot fetch-repos           # git fetch all subrepos in container
+# Discovery (token only)
+python -m progress_report_bot ping
+python -m progress_report_bot projects --json
+
+# Discovery (token + --project-key)
+python -m progress_report_bot types --project-key <key> --json
+python -m progress_report_bot carriers --project-key <key> --json
+
+# Report pipeline
+python -m progress_report_bot run-all                          # local md only
+python -m progress_report_bot run-all --scope project          # boss view
+python -m progress_report_bot run-all --apply                  # post comment (carrier must be in .env)
+python -m progress_report_bot diff
+python -m progress_report_bot sync                             # preview node transitions
+python -m progress_report_bot sync --apply
+python -m progress_report_bot repos                            # monorepo mapping diagnose
+python -m progress_report_bot fetch-repos                      # git fetch all sub-repos
 ```
 
-### --scope: who's included in the report
+**Do NOT run:** `python -m progress_report_bot init` — that is a local terminal
+wizard; end users configure through chat instead.
 
-`fetch` / `report` / `push` / `run-all` / `diff` all accept `--scope`:
+### --scope
 
-| value | source | covers |
-|---|---|---|
-| `mine` (default) | `list_todo` | only the token holder's own workitems (fast, narrow) |
-| `project` | `search_by_mql` over `MEEGO_SCAN_TYPES` | the whole project space, all members (slow, broad — boss view) |
-| `all` | both, deduped | union of mine + project |
+| value | covers |
+|---|---|
+| `mine` (default) | token holder's own workitems via `list_todo` |
+| `project` | whole space via MQL over `MEEGO_SCAN_TYPES` |
+| `all` | union of both, deduped |
 
-`project` / `all` require `MEEGO_SCAN_TYPES` in `.env` (default `执行需求`). If the
-team uses a different workitem type for execution tracking, change it there.
+Add `--use-cache` to skip re-fetching Feishu when iterating on the same snapshot.
 
-Add `--use-cache` to `report` / `diff` / `push` / `run-all` to reuse the last
-`data/snapshot.json` (faster iteration, no Feishu API call).
+## Outputs to surface
 
-## Outputs the agent should surface to the user
+- `data/report.md` — boss-view weekly summary
+- `data/diff.md` — discrepancy report
+- `data/snapshot.json` — raw audit trail
 
-- `data/report.md` — boss-view weekly summary (completion %, risks, per-demand progress, team contribution)
-- `data/diff.md` — discrepancy report (`fake_done`, `lag`, `stagnant_node`, `overdue`, etc.)
-- `data/snapshot.json` — raw Feishu + Git data (audit trail)
+## Safety rules
 
-After running, read these files and quote the headline plus any 🔴 critical
-items back to the user. Never paste the full markdown unless asked.
-
-## Safety rules (must follow)
-
-1. **Never run any `--apply` command without explicit user confirmation in
-   this turn.** Default to dry-run; print what would change first.
-2. **Do not modify the user's `.env` silently.** If a required field is
-   missing, prompt the user; do not invent values.
-3. **`sync --apply` writes to Feishu workflow state.** Always run `sync`
-   without `--apply` first and present the candidate list before asking
-   permission.
-4. **Respect `SYNC_BRANCH_WHITELIST`** in `.env` — if set, the tool already
-   enforces it; do not suggest bypassing it.
+1. **Never `--apply` without explicit user confirmation in this turn.**
+2. **Only ask the user to type the MCP token.** Everything else = numbered choice in chat.
+3. **Carrier workitem must come from `carriers --json`** — only items the user participates in.
+4. **`sync --apply` changes Feishu workflow.** Always dry-run `sync` first.
+5. **Do not invent project keys, workitem IDs, or type keys.**
 
 ## Detailed reference
 
-For full env-var reference, discrepancy taxonomy (9 kinds), demo script and
-verified facts about the Feishu MCP API, see [reference.md](reference.md).
+See [reference.md](reference.md) for env-var table, discrepancy taxonomy, and MCP API facts.

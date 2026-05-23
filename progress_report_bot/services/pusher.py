@@ -33,6 +33,8 @@ class Pusher:
         dry_run: Optional[bool] = None,
         *,
         show_preview: bool = True,
+        carrier_id: Optional[str] = None,
+        carrier_type_key: Optional[str] = None,
     ) -> str:
         """渲染评论并推送（或 dry-run）。返回人类可读的结果摘要。
 
@@ -42,6 +44,8 @@ class Pusher:
         if dry_run is None:
             dry_run = True
 
+        cid = (carrier_id or self.cfg.meego_report_carrier_id or "").strip()
+        ctype = (carrier_type_key or self.cfg.meego_report_carrier_type_key or "").strip()
         comment_md = render_lark_comment(report)
 
         if dry_run:
@@ -50,37 +54,39 @@ class Pusher:
                 print("\n" + "─" * 70)
                 print(comment_md)
                 print("─" * 70 + "\n")
-            carrier = self.cfg.meego_report_carrier_id or "(未配置 MEEGO_REPORT_CARRIER_ID)"
+            carrier = cid or "(未配置 MEEGO_REPORT_CARRIER_ID)"
             return (
                 f"[dry-run] 评论未推送（carrier={carrier}）。"
                 f"如需真实发表，加 --apply 参数；预计 @ {len(report.mentions)} 位负责人。"
             )
 
         # 真实推送
-        if not self.cfg.meego_report_carrier_id:
+        if not cid:
             raise RuntimeError(
-                "MEEGO_REPORT_CARRIER_ID 未配置，无法推送。请在 .env 设置承载工作项 ID。"
+                "MEEGO_REPORT_CARRIER_ID 未配置，无法推送。"
+                "请在 .env 设置承载工作项 ID，或使用 --select-carrier 交互选择。"
             )
-        if not self.cfg.meego_report_carrier_type_key:
+        if not ctype:
             raise RuntimeError(
-                "MEEGO_REPORT_CARRIER_TYPE_KEY 未配置（一般是 684a81a489c47be26942c57e）。"
+                "MEEGO_REPORT_CARRIER_TYPE_KEY 未配置。"
+                "请重新 init 选择承载工作项，或使用 --select-carrier。"
             )
 
         try:
             self.meego.initialize()
             result = self.meego.add_comment(
                 project_key=self.cfg.meego_project_key,
-                work_item_id=self.cfg.meego_report_carrier_id,
-                work_item_type_key=self.cfg.meego_report_carrier_type_key,
+                work_item_id=cid,
+                work_item_type_key=ctype,
                 content_markdown=comment_md,
             )
         except MeegoMCPError as e:
-            self._audit(report, status="error", detail=str(e))
+            self._audit(report, status="error", detail=str(e), carrier_id=cid)
             raise
 
-        self._audit(report, status="ok", detail=str(result)[:200])
+        self._audit(report, status="ok", detail=str(result)[:200], carrier_id=cid)
         return (
-            f"✅ 评论已发表到 工作项 #{self.cfg.meego_report_carrier_id}；"
+            f"✅ 评论已发表到 工作项 #{cid}；"
             f"@{len(report.mentions)} 位负责人。"
         )
 
@@ -88,13 +94,21 @@ class Pusher:
     # 审计
     # ------------------------------------------------------------
 
-    def _audit(self, report: ReportData, *, status: str, detail: str = "") -> None:
+    def _audit(
+        self,
+        report: ReportData,
+        *,
+        status: str,
+        detail: str = "",
+        carrier_id: Optional[str] = None,
+    ) -> None:
         try:
             log_path: Path = self.cfg.ensure_data_dir() / "push_history.log"
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cid = carrier_id or self.cfg.meego_report_carrier_id or "(dry-run)"
             line = (
                 f"{ts} | status={status} | "
-                f"carrier={self.cfg.meego_report_carrier_id or '(dry-run)'} | "
+                f"carrier={cid} | "
                 f"done={report.done_count}/{report.total_count} | "
                 f"risks={len(report.risks)} | mentions={len(report.mentions)} | "
                 f"detail={detail}\n"

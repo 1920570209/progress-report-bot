@@ -90,6 +90,10 @@ def resolve_repos(cfg: Config, work_item) -> list:
             mapped = cfg.resolve_repo_paths(list(work_item.repos))
             if mapped:
                 return [p for p, _ in mapped]
+        # 容器模式：工作项未指定仓库时，扫描 root 下全部 git 子目录
+        all_repos = cfg.list_container_repo_paths()
+        if all_repos:
+            return all_repos
         if cfg.local_git_repo_path:
             return [cfg.local_git_repo_path]
         return []

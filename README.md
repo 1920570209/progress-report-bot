@@ -48,25 +48,25 @@ The installer does two things:
 
 After restart, the assistant will see this skill's `SKILL.md` (with its YAML frontmatter) and trigger it whenever the user asks about 飞书项目周报 / 版本进度 / 进度对账 / Meego progress / etc.
 
-### 4. Try it — **prefer talking to AI, not typing commands**
+### 4. Try it — **全程对话，只手输 token**
 
-The whole point of packaging this as a Skill is that you don't have to remember CLI flags. Open the project you care about in Cursor / Claude and just say one of these:
+打开你要分析的目录（可以是单个 git 仓库，也可以是一个**包含多个 git 子仓库的总目录**），在 Cursor / Claude Code 里直接说：
 
 | 你说什么 | AI 会做什么 |
 |---|---|
-| "跑一下这个项目的飞书周报" | 首跑：问你 token + project_key + 默认 scope → 帮你写 `.env` → `run-all` → 把要点贴回来 |
-| "看一下飞书 ↔ Git 对账，有没有假完成的" | 直接 `diff`，把红色项贴回来 |
-| "把刚才那份周报发到飞书评论区" | 加 `--apply` 跑 `run-all`，发到 `MEEGO_REPORT_CARRIER_ID` 工作项 |
-| "切到全员视角再跑一遍" | 用 `--scope project` 重跑，对比给你看 |
+| "跑一下这个项目的飞书周报" | ① 让你手输 `MEEGO_MCP_TOKEN`（**唯一手输项**）→ ② 调 `projects --json` 列出可访问的项目空间，让你**选序号** → ③ 列出 scope（mine/project/all）让你选 → ④ 自动探测 git（总目录下多个子仓库会**全部扫描**）→ ⑤ `run-all` 生成本地报告 → 摘要贴回对话 |
+| "看一下飞书 vs Git 对账，有没有假完成的" | 直接 `diff`，把🔴项贴回来 |
+| "把这份周报发到飞书评论区" | 调 `carriers --json` 列出**你参与的工作项**让你选序号 → 写入 `.env` → 再次确认后 `run-all --apply` |
+| "切到全员视角再跑一遍" | `--scope project` 重跑 |
 | "PR 已合到 test 了，把对应飞书节点推进一下" | `sync` dry-run 列候选 → 等你确认 → `sync --apply` |
 
-AI 首次跑时会**主动**问你飞书 token / project_key，不会自己编。问完直接写 `.env`，**不会**让你去开个交互式终端跑 wizard。
+**AI 不会跑 `init` 向导**——所有"选哪个"都在对话里以编号列表呈现，AI 帮你写 `.env`。
 
-如果你仍然喜欢手动跑 CLI（或在没装 Cursor 的机器上用），手工流程：
+如果你想手工跑（无 Cursor 环境）：
 
 ```bash
 cd <your-project>
-python -m progress_report_bot init        # 交互向导（人手版）
+python -m progress_report_bot init        # 交互向导（人手版，会问 token + 选项目 + 选承载工作项）
 python -m progress_report_bot run-all     # safe: local md only
 ```
 
