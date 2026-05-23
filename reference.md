@@ -27,6 +27,8 @@ Manually edit only when changing defaults.
 | `SYNC_SOURCE_NODE_NAME` | `sync` | Feishu node to transition from, default `功能开发` |
 | `SYNC_TARGET_NODE_NAMES` | `sync` | Acceptable next nodes, default `功能测试,提测,测试中` |
 | `REPORT_WINDOW_DAYS` | optional | Default 7 |
+| `MEEGO_SCAN_TYPES` | `--scope project/all` | Comma-sep workitem type names to scan via MQL, default `执行需求` |
+| `MEEGO_SPACE_SIMPLE_NAME` | optional | Feishu space simple_name; if empty, fetcher looks it up via `search_project_info` |
 
 ## Discrepancy taxonomy (F6)
 

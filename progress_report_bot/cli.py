@@ -98,7 +98,8 @@ def cmd_todos(cfg: Config, args: argparse.Namespace) -> int:
 
 def cmd_fetch(cfg: Config, args: argparse.Namespace) -> int:
     fetcher = Fetcher(cfg)
-    snap = fetcher.fetch(persist=True)
+    scope = getattr(args, "scope", "mine") or "mine"
+    snap = fetcher.fetch(persist=True, scope=scope)
     print("\n" + "=" * 70)
     print(f"[ok] snapshot 已生成 → {cfg.data_dir / 'snapshot.json'}")
     print("=" * 70)
@@ -122,19 +123,19 @@ def cmd_fetch(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
-def _load_snapshot(cfg: Config, use_cache: bool):
+def _load_snapshot(cfg: Config, use_cache: bool, scope: str = "mine"):
     """use_cache=True 时优先读 data/snapshot.json，不存在则在线拉取。"""
     cache = snapshot_path(cfg.data_dir)
     if use_cache and cache.exists():
         print(f"[cache] 使用已有快照 → {cache}")
         return load_snapshot(cache)
     fetcher = Fetcher(cfg)
-    return fetcher.fetch(persist=True)
+    return fetcher.fetch(persist=True, scope=scope)
 
 
 def cmd_report(cfg: Config, args: argparse.Namespace) -> int:
     """F1 + F2: fetch → analyze (+ diff) → render → data/report.md。"""
-    snap = _load_snapshot(cfg, args.use_cache)
+    snap = _load_snapshot(cfg, args.use_cache, scope=getattr(args, "scope", "mine"))
     analyzer = Analyzer(cfg)
     report = analyzer.analyze(snap)
 
@@ -181,7 +182,7 @@ def cmd_push(cfg: Config, args: argparse.Namespace) -> int:
     **默认行为 = 只生成本地文档**（``data/report.md`` + ``data/diff.md``），
     评论是 opt-in：必须显式 ``--apply`` 才会真实推送到飞书工作项。
     """
-    snap = _load_snapshot(cfg, args.use_cache)
+    snap = _load_snapshot(cfg, args.use_cache, scope=getattr(args, "scope", "mine"))
     report = Analyzer(cfg).analyze(snap)
 
     md_path, diff_path = _write_local_artifacts(cfg, report)
@@ -324,7 +325,7 @@ def cmd_fetch_repos(cfg: Config, args: argparse.Namespace) -> int:
 
 def cmd_diff(cfg: Config, args: argparse.Namespace) -> int:
     """F6: 飞书项目状态 ↔ Git 实际进度 对账。"""
-    snap = _load_snapshot(cfg, args.use_cache)
+    snap = _load_snapshot(cfg, args.use_cache, scope=getattr(args, "scope", "mine"))
     diff = DiffAnalyzer(cfg).analyze(snap)
 
     md = render_diff_markdown(diff)
@@ -563,10 +564,23 @@ def _build_parser() -> argparse.ArgumentParser:
     pp_todo.add_argument("--max-pages", type=int, default=3)
     pp_todo.set_defaults(func=cmd_todos)
 
+    def _add_scope(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--scope",
+            choices=["mine", "project", "all"],
+            default="mine",
+            help=(
+                "采集范围：mine=token 持有者本人（默认，飞书 list_todo）；"
+                "project=全空间扫描（飞书 search_by_mql，按 MEEGO_SCAN_TYPES 类型，"
+                "需要在 .env 配 MEEGO_SCAN_TYPES）；all=两者合并去重"
+            ),
+        )
+
     pp_fetch = sub.add_parser(
         "fetch",
         help="F1: 拉飞书空间数据 → data/snapshot.json (后续 report/push 的输入)",
     )
+    _add_scope(pp_fetch)
     pp_fetch.set_defaults(func=cmd_fetch)
 
     pp_report = sub.add_parser(
@@ -581,6 +595,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="使用 data/snapshot.json（存在则跳过在线拉取，演示更快）",
     )
+    _add_scope(pp_report)
     pp_report.set_defaults(func=cmd_report)
 
     pp_push = sub.add_parser(
@@ -603,6 +618,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="使用 data/snapshot.json（存在则跳过在线拉取）",
     )
+    _add_scope(pp_push)
     pp_push.set_defaults(func=cmd_push)
 
     pp_runall = sub.add_parser(
@@ -613,6 +629,7 @@ def _build_parser() -> argparse.ArgumentParser:
     g2.add_argument("--dry-run", action="store_true")
     g2.add_argument("--apply", action="store_true")
     pp_runall.add_argument("--use-cache", action="store_true")
+    _add_scope(pp_runall)
     pp_runall.set_defaults(func=cmd_run_all)
 
     pp_repos = sub.add_parser(
@@ -636,6 +653,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="使用 data/snapshot.json（存在则跳过在线拉取，演示更快）",
     )
+    _add_scope(pp_diff)
     pp_diff.set_defaults(func=cmd_diff)
 
     pp_sync = sub.add_parser(

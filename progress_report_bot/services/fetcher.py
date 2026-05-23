@@ -208,19 +208,42 @@ class Fetcher:
 
     # ----- public -----
 
-    def fetch(self, *, persist: bool = True) -> ProjectSnapshot:
+    SCOPE_MINE = "mine"
+    SCOPE_PROJECT = "project"
+    SCOPE_ALL = "all"
+
+    def fetch(self, *, persist: bool = True, scope: str = "mine") -> ProjectSnapshot:
+        """三种采集范围：
+
+        - ``mine`` (默认)：list_todo 拉 token 持有者本人参与的工作项（快、范围窄）
+        - ``project``    ：search_by_mql 按类型扫全空间（慢、覆盖全员）
+        - ``all``        ：mine 与 project 合并去重
+        """
         self.cfg.require_meego()
         self.meego.initialize()
 
+        if scope == self.SCOPE_PROJECT:
+            return self._fetch_project_scope(persist=persist)
+        if scope == self.SCOPE_ALL:
+            snap_mine = self._fetch_user_scope(persist=False)
+            snap_proj = self._fetch_project_scope(persist=False)
+            return self._merge_snapshots(snap_mine, snap_proj, persist=persist)
+        if scope != self.SCOPE_MINE:
+            raise ValueError(f"unknown scope: {scope!r} (expected mine/project/all)")
+        return self._fetch_user_scope(persist=persist)
+
+    # ----- scope=mine: 原行为（list_todo） -----
+
+    def _fetch_user_scope(self, *, persist: bool) -> ProjectSnapshot:
         project_key = self.cfg.meego_project_key
         window_days = self.cfg.report_window_days
         since = datetime.now() - timedelta(days=window_days)
 
-        logger.info("拉取 todo（全量翻页）...")
+        logger.info("[scope=mine] 拉取 todo（全量翻页）...")
         todo_raws = self.meego.list_todo_all_pages(action="todo", max_pages=5)
         logger.info("  → %d 条 todo", len(todo_raws))
 
-        logger.info("拉取 done（since=%s）...", since.strftime("%Y-%m-%d %H:%M"))
+        logger.info("[scope=mine] 拉取 done（since=%s）...", since.strftime("%Y-%m-%d %H:%M"))
         done_raws = self.meego.list_done_since(since=since, max_pages=10)
         logger.info("  → %d 条 done (本周节点完成事件)", len(done_raws))
 
@@ -319,6 +342,199 @@ class Fetcher:
         if persist:
             self._dump(snapshot)
         return snapshot
+
+    # ----- scope=project: search_by_mql 全空间扫描 -----
+
+    def _fetch_project_scope(self, *, persist: bool) -> ProjectSnapshot:
+        project_key = self.cfg.meego_project_key
+        window_days = self.cfg.report_window_days
+        since = datetime.now() - timedelta(days=window_days)
+
+        scan_types = self.cfg.scan_type_list
+        if not scan_types:
+            raise RuntimeError(
+                "scope=project 需要 MEEGO_SCAN_TYPES (.env)，例如：MEEGO_SCAN_TYPES=执行需求"
+            )
+
+        space_label = self.cfg.meego_space_simple_name.strip()
+        project_name = project_key
+        if not space_label:
+            try:
+                d = self.meego.search_project_info(project_key=project_key)
+                for p in (d.get("projects") or d.get("list") or []):
+                    if p.get("project_key") == project_key:
+                        space_label = str(p.get("simple_name") or project_key)
+                        project_name = str(p.get("name") or project_key)
+                        break
+            except Exception as e:  # noqa: BLE001
+                logger.warning("查 simple_name 失败，退回 project_key: %s", e)
+            if not space_label:
+                space_label = project_key
+
+        logger.info(
+            "[scope=project] MQL 扫描类型 %s @ space=%s",
+            scan_types,
+            space_label,
+        )
+
+        # 1) 用 MQL 拉每个类型的全部 (work_item_id, name, updated_at, type_key)
+        rows_by_id: Dict[str, Tuple[str, str, Optional[datetime]]] = {}
+        for type_name in scan_types:
+            type_key = self._resolve_type_key(project_key, type_name)
+            try:
+                raw_rows = self.meego.search_workitems_by_mql_all_pages(
+                    project_key=project_key,
+                    space_label=space_label,
+                    type_name=type_name,
+                    fields=["work_item_id", "name", "updated_at"],
+                    max_pages=20,
+                )
+            except MeegoMCPError as e:
+                logger.warning("MQL 扫描类型 %r 失败: %s", type_name, e)
+                continue
+            logger.info("  类型 %r → %d 项", type_name, len(raw_rows))
+            for r in raw_rows:
+                wid = str(r.get("work_item_id") or "")
+                if not wid or wid in rows_by_id:
+                    continue
+                name = str(r.get("name") or "")
+                ts_str = str(r.get("updated_at") or "")
+                updated = self._parse_loose_datetime(ts_str)
+                rows_by_id[wid] = (type_key, name, updated)
+
+        # 2) 本地按 updated_at 过滤到时间窗口内
+        in_window = [
+            (wid, t, n) for wid, (t, n, u) in rows_by_id.items()
+            if u is None or u >= since
+        ]
+        logger.info(
+            "[scope=project] MQL 共 %d 项，时间窗口内 (>= %s) %d 项",
+            len(rows_by_id),
+            since.strftime("%Y-%m-%d"),
+            len(in_window),
+        )
+
+        # 3) 对窗口内的工作项调 get_node_detail 取详情
+        items_by_id: Dict[str, WorkItem] = {}
+        failed: List[Tuple[str, str]] = []
+        for i, (wid, tkey, name) in enumerate(in_window, 1):
+            try:
+                detail = self.meego.get_node_detail(
+                    project_key=project_key,
+                    work_item_id=wid,
+                    work_item_type_key=tkey,
+                    node_id="state_3",
+                )
+                wi = _build_work_item(
+                    project_key=project_key,
+                    project_name=project_name,
+                    work_item_id=wid,
+                    work_item_name=name,
+                    work_item_type_key=tkey,
+                    node_detail=detail,
+                )
+                items_by_id[wid] = wi
+                logger.info(
+                    "  [%d/%d] #%s %s — node=%s/%s branch=%s",
+                    i, len(in_window), wid, name[:30],
+                    wi.current_node_name, wi.current_node_status, wi.branch,
+                )
+            except MeegoMCPError as e:
+                failed.append((wid, str(e)))
+                logger.warning("  [%d/%d] #%s 拉取失败: %s", i, len(in_window), wid, e)
+        if failed:
+            logger.warning("共 %d 项 get_node_detail 失败（已跳过）", len(failed))
+
+        # 4) todo / done 分桶：未完成 → todo；已完成 → done
+        todo_items: List[WorkItem] = []
+        done_items: List[WorkItem] = []
+        for wi in items_by_id.values():
+            if wi.current_node_status == "finished" or "完成" in (wi.current_node_status or ""):
+                done_items.append(wi)
+            else:
+                todo_items.append(wi)
+
+        enriched = self._enrich_github(list(items_by_id.values()), since=since)
+        snapshot = ProjectSnapshot(
+            project_key=project_key,
+            project_name=project_name,
+            fetched_at=datetime.now(),
+            window_days=window_days,
+            todo_items=todo_items,
+            done_items=done_items,
+            enriched=enriched,
+        )
+        if persist:
+            self._dump(snapshot)
+        return snapshot
+
+    def _merge_snapshots(
+        self,
+        a: ProjectSnapshot,
+        b: ProjectSnapshot,
+        *,
+        persist: bool,
+    ) -> ProjectSnapshot:
+        """合并两个 snapshot，按 work_item_id 去重；a 中已存在的优先（含完整 owner 信息）。"""
+        seen: set = {w.work_item_id for w in a.todo_items + a.done_items}
+
+        todo = list(a.todo_items)
+        done = list(a.done_items)
+        for w in b.todo_items:
+            if w.work_item_id not in seen:
+                todo.append(w)
+                seen.add(w.work_item_id)
+        for w in b.done_items:
+            if w.work_item_id not in seen:
+                done.append(w)
+                seen.add(w.work_item_id)
+
+        # enriched 也合并去重
+        enriched_seen: set = {e.work_item.work_item_id for e in a.enriched}
+        enriched = list(a.enriched)
+        for e in b.enriched:
+            if e.work_item.work_item_id not in enriched_seen:
+                enriched.append(e)
+                enriched_seen.add(e.work_item.work_item_id)
+
+        snap = ProjectSnapshot(
+            project_key=a.project_key,
+            project_name=a.project_name or b.project_name,
+            fetched_at=datetime.now(),
+            window_days=a.window_days,
+            todo_items=todo,
+            done_items=done,
+            enriched=enriched,
+        )
+        if persist:
+            self._dump(snap)
+        return snap
+
+    def _resolve_type_key(self, project_key: str, type_name: str) -> str:
+        """把中文类型名解析为 type_key（如 ``执行需求`` → ``684a81a489c47be26942c57e``）。
+        若 type_name 本身就是 type_key（无中文）直接返回。
+        """
+        if not any("\u4e00" <= ch <= "\u9fff" for ch in type_name):
+            return type_name
+        try:
+            types = self.meego.list_workitem_types(project_key)
+        except Exception:  # noqa: BLE001
+            return type_name
+        for t in types:
+            if t.get("name") == type_name:
+                return str(t.get("type_key") or type_name)
+        return type_name
+
+    @staticmethod
+    def _parse_loose_datetime(s: str) -> Optional[datetime]:
+        if not s:
+            return None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        return None
 
     # ----- helpers -----
 

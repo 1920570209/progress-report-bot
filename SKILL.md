@@ -79,14 +79,28 @@ All commands are safe-by-default. Anything that writes to Feishu requires
 ```bash
 python -m progress_report_bot init                  # one-time wizard, writes ./.env
 python -m progress_report_bot ping                  # verify MCP connectivity
-python -m progress_report_bot run-all               # local report only (safe)
+python -m progress_report_bot run-all               # local report only (safe, scope=mine)
 python -m progress_report_bot run-all --apply       # also post comment to Feishu
+python -m progress_report_bot run-all --scope project   # ★ scan whole project (all members)
 python -m progress_report_bot diff                  # just the discrepancy report
 python -m progress_report_bot sync                  # preview workflow transitions (git mode only)
 python -m progress_report_bot sync --apply          # actually transition nodes
 python -m progress_report_bot repos                 # diagnose short-code → repo mapping (monorepo)
 python -m progress_report_bot fetch-repos           # git fetch all subrepos in container
 ```
+
+### --scope: who's included in the report
+
+`fetch` / `report` / `push` / `run-all` / `diff` all accept `--scope`:
+
+| value | source | covers |
+|---|---|---|
+| `mine` (default) | `list_todo` | only the token holder's own workitems (fast, narrow) |
+| `project` | `search_by_mql` over `MEEGO_SCAN_TYPES` | the whole project space, all members (slow, broad — boss view) |
+| `all` | both, deduped | union of mine + project |
+
+`project` / `all` require `MEEGO_SCAN_TYPES` in `.env` (default `执行需求`). If the
+team uses a different workitem type for execution tracking, change it there.
 
 Add `--use-cache` to `report` / `diff` / `push` / `run-all` to reuse the last
 `data/snapshot.json` (faster iteration, no Feishu API call).

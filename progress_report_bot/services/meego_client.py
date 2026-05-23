@@ -326,6 +326,87 @@ class MeegoClient:
         contents = self.call_tool("search_by_mql", args)
         return self.first_dict(contents)
 
+    # --- MQL 翻页 + 行解析（用于 --scope project / 全员视角）---
+
+    @staticmethod
+    def _decode_moql_rows(raw_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """把 ``[{moql_field_list: [{key, value: {long_value|string_value|...}}]}, ...]``
+        打平成 ``[{key1: v1, key2: v2}, ...]``。
+        """
+        out: List[Dict[str, Any]] = []
+        for r in raw_rows or []:
+            flat: Dict[str, Any] = {}
+            for f in r.get("moql_field_list", []) or []:
+                k = f.get("key")
+                if not k:
+                    continue
+                v = f.get("value") or {}
+                val = None
+                for vk in ("long_value", "string_value", "bool_value",
+                           "double_value", "array_value", "struct_value"):
+                    if vk in v and v.get(vk) is not None:
+                        val = v.get(vk)
+                        break
+                flat[k] = val
+            out.append(flat)
+        return out
+
+    def search_workitems_by_mql_all_pages(
+        self,
+        project_key: str,
+        space_label: str,
+        type_name: str,
+        fields: Optional[List[str]] = None,
+        where: str = "",
+        max_pages: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """全空间 MQL 拉某类型的所有工作项简要字段，自动翻页。
+
+        - ``space_label``: 空间标识，simple_name / project_key / 中文名皆可
+        - ``type_name``: 工作项类型名（中文或 type_key），如 ``执行需求``
+        - ``fields``: SELECT 字段列表，默认 ``["work_item_id","name","updated_at"]``
+        - ``where``: WHERE 子句（不含 WHERE 关键字），如 ``RELATIVE_DATETIME_GT(`updated_at`, 'today')``
+        """
+        fields = list(fields or ["work_item_id", "name", "updated_at"])
+        field_clause = ", ".join(f"`{f}`" for f in fields)
+        mql = f"SELECT {field_clause} FROM `{space_label}`.`{type_name}`"
+        if where:
+            mql += f" WHERE {where}"
+
+        d = self.search_by_mql(project_key, mql)
+        list_section = d.get("list") or []
+        if not isinstance(list_section, list) or not list_section:
+            return []
+        group_infos = (list_section[0] or {}).get("group_infos") or []
+        if not group_infos:
+            return []
+        group_id = str(group_infos[0].get("group_id") or "1")
+        total = int((list_section[0] or {}).get("count") or 0)
+        sid = d.get("session_id") or ""
+
+        rows: List[Dict[str, Any]] = list((d.get("data") or {}).get(group_id) or [])
+
+        for page in range(2, max_pages + 1):
+            if len(rows) >= total:
+                break
+            contents = self.call_tool(
+                "search_by_mql",
+                {
+                    "project_key": project_key,
+                    "session_id": sid,
+                    "group_pagination_list": [
+                        {"page_num": page, "group_id": group_id}
+                    ],
+                },
+            )
+            d2 = self.first_dict(contents)
+            page_rows = (d2.get("data") or {}).get(group_id) or []
+            if not page_rows:
+                break
+            rows.extend(page_rows)
+
+        return self._decode_moql_rows(rows)
+
     # --- 工作项详情 ---
 
     def get_workitem_brief(
