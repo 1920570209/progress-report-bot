@@ -79,6 +79,8 @@ class Config:
     report_window_days: int = 7
 
     # --- 全员扫描（--scope project / all 用）---
+    # 默认 scope；命令行 --scope 优先级最高，未传时用这个。
+    default_scope: str = "mine"  # mine / project / all
     # 当前 token 个人视角能拿的工作项由 list_todo 决定（默认 scope=mine）。
     # 切到 project / all 时改走 search_by_mql；需要这两项：
     meego_space_simple_name: str = ""  # 留空时 fetcher 会自动查；预填能省一次 API 调用
@@ -127,6 +129,7 @@ class Config:
             report_window_days=int(os.environ.get("REPORT_WINDOW_DAYS", "7")),
             meego_space_simple_name=os.environ.get("MEEGO_SPACE_SIMPLE_NAME", ""),
             meego_scan_types=os.environ.get("MEEGO_SCAN_TYPES", "执行需求"),
+            default_scope=(os.environ.get("DEFAULT_SCOPE", "mine") or "mine").strip().lower(),
         )
 
     @property

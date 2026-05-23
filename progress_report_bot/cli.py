@@ -343,11 +343,54 @@ def cmd_diff(cfg: Config, args: argparse.Namespace) -> int:
 # init: 交互式向导（首跑必经）
 # ------------------------------------------------------------
 
+_STDIN_UTF8_TRIED = False
+
+
+def _ensure_utf8_stdio() -> None:
+    """把 stdin/stdout 重配置成 UTF-8，避免 Windows 默认 cp936 把中文喂成 `?`。
+
+    优先 `reconfigure`（Py 3.7+ tty 场景生效），不行时用 ``TextIOWrapper`` 重新
+    包一层 buffer（管道场景也生效）。
+    """
+    global _STDIN_UTF8_TRIED
+    if _STDIN_UTF8_TRIED:
+        return
+    _STDIN_UTF8_TRIED = True
+    import io as _io
+
+    for name in ("stdin", "stdout"):
+        stream = getattr(sys, name)
+        reconfig = getattr(stream, "reconfigure", None)
+        if reconfig is not None:
+            try:
+                reconfig(encoding="utf-8", errors="replace")
+                continue
+            except Exception:  # noqa: BLE001
+                pass
+        buf = getattr(stream, "buffer", None)
+        if buf is None:
+            continue
+        try:
+            setattr(
+                sys,
+                name,
+                _io.TextIOWrapper(
+                    buf,
+                    encoding="utf-8",
+                    errors="replace",
+                    line_buffering=True,
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _ask(prompt: str, default: str = "", required: bool = False) -> str:
     """统一的交互问答；支持 tty 与管道喂值，EOF 时回退到 default。
 
     管道模式下若 required 仍为空，不死循环——直接返回空字符串，让上层校验。
     """
+    _ensure_utf8_stdio()
     suffix = f" [{default}]" if default else ""
     tag = " (必填)" if required else ""
     interactive = sys.stdin.isatty()
@@ -441,7 +484,7 @@ def cmd_init(cfg: Config, args: argparse.Namespace) -> int:
     print("=" * 70)
     print("将引导你完成最小可用配置。所有问题都在 .env 落盘，可随时手改。\n")
 
-    print("[1/3] 飞书项目 MCP 必填项")
+    print("[1/4] 飞书项目 MCP 必填项")
     token = _ask(
         "MEEGO_MCP_TOKEN（飞书项目 > 设置 > MCP 接入 > 复制 token）",
         default=cfg.meego_mcp_token,
@@ -453,7 +496,7 @@ def cmd_init(cfg: Config, args: argparse.Namespace) -> int:
         required=True,
     )
 
-    print("\n[2/3] 可选：评论承载工作项")
+    print("\n[2/4] 可选：评论承载工作项")
     print("       若想用 push --apply 把周报评论自动发到某个工作项，填它的 ID；")
     print("       留空则 push 只生成本地 md，不会动飞书。")
     carrier_id = _ask(
@@ -469,7 +512,29 @@ def cmd_init(cfg: Config, args: argparse.Namespace) -> int:
             required=False,
         )
 
-    print("\n[3/3] 自动探测 git 仓库（当前目录: %s）" % Path.cwd())
+    print("\n[3/4] 默认采集范围（决定 run-all 看谁的工作项）")
+    print("       - mine    : 只看 token 持有者本人参与的（快、准、范围窄）")
+    print("       - project : 扫整个空间的工作项（全员视角，慢一些，老板周报推荐）")
+    print("       - all     : 两者合并去重")
+    scope = (_ask(
+        "DEFAULT_SCOPE",
+        default=cfg.default_scope or "mine",
+        required=False,
+    ) or "mine").strip().lower()
+    if scope not in ("mine", "project", "all"):
+        print(f"    ! 无法识别 {scope!r}，回退到 mine")
+        scope = "mine"
+    scan_types = cfg.meego_scan_types or "执行需求"
+    if scope in ("project", "all"):
+        print("       全员扫描需要指定 MQL 的工作项类型（飞书项目里的「类型」名）。")
+        print("       常见：执行需求 / 需求 / 迭代 / 缺陷。可多选，逗号分隔。")
+        scan_types = _ask(
+            "MEEGO_SCAN_TYPES",
+            default=scan_types,
+            required=False,
+        ) or "执行需求"
+
+    print("\n[4/4] 自动探测 git 仓库（当前目录: %s）" % Path.cwd())
     provider, git_lines, summary = _detect_git(Path.cwd())
     print(f"  → {summary}")
 
@@ -483,6 +548,11 @@ def cmd_init(cfg: Config, args: argparse.Namespace) -> int:
         f"MEEGO_REPORT_CARRIER_ID={carrier_id}",
         f"MEEGO_REPORT_CARRIER_TYPE_KEY={carrier_type_key}",
         "MEEGO_FOCUS_WORK_ITEM_ID=",
+        "",
+        "# === 采集范围 ===",
+        f"DEFAULT_SCOPE={scope}",
+        f"MEEGO_SCAN_TYPES={scan_types}",
+        "MEEGO_SPACE_SIMPLE_NAME=",
         "",
         "# === Git provider（自动探测得出） ===",
     ]
@@ -568,11 +638,11 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--scope",
             choices=["mine", "project", "all"],
-            default="mine",
+            default=None,
             help=(
-                "采集范围：mine=token 持有者本人（默认，飞书 list_todo）；"
-                "project=全空间扫描（飞书 search_by_mql，按 MEEGO_SCAN_TYPES 类型，"
-                "需要在 .env 配 MEEGO_SCAN_TYPES）；all=两者合并去重"
+                "采集范围：mine=token 持有者本人（飞书 list_todo）；"
+                "project=全空间扫描（飞书 search_by_mql，按 MEEGO_SCAN_TYPES 类型）；"
+                "all=两者合并去重。未传时读 .env 的 DEFAULT_SCOPE（默认 mine）。"
             ),
         )
 
@@ -729,6 +799,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     pre = _ensure_configured(cfg, args.command)
     if pre is not None:
         return pre
+
+    # 各业务命令的 --scope 未显式传时，回落到 .env 的 DEFAULT_SCOPE
+    if getattr(args, "scope", "mine") is None:
+        args.scope = cfg.default_scope or "mine"
 
     try:
         return args.func(cfg, args)
