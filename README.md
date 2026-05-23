@@ -48,13 +48,25 @@ The installer does two things:
 
 After restart, the assistant will see this skill's `SKILL.md` (with its YAML frontmatter) and trigger it whenever the user asks about 飞书项目周报 / 版本进度 / 进度对账 / Meego progress / etc.
 
-### 4. Try it
+### 4. Try it — **prefer talking to AI, not typing commands**
 
-In any project directory:
+The whole point of packaging this as a Skill is that you don't have to remember CLI flags. Open the project you care about in Cursor / Claude and just say one of these:
+
+| 你说什么 | AI 会做什么 |
+|---|---|
+| "跑一下这个项目的飞书周报" | 首跑：问你 token + project_key + 默认 scope → 帮你写 `.env` → `run-all` → 把要点贴回来 |
+| "看一下飞书 ↔ Git 对账，有没有假完成的" | 直接 `diff`，把红色项贴回来 |
+| "把刚才那份周报发到飞书评论区" | 加 `--apply` 跑 `run-all`，发到 `MEEGO_REPORT_CARRIER_ID` 工作项 |
+| "切到全员视角再跑一遍" | 用 `--scope project` 重跑，对比给你看 |
+| "PR 已合到 test 了，把对应飞书节点推进一下" | `sync` dry-run 列候选 → 等你确认 → `sync --apply` |
+
+AI 首次跑时会**主动**问你飞书 token / project_key，不会自己编。问完直接写 `.env`，**不会**让你去开个交互式终端跑 wizard。
+
+如果你仍然喜欢手动跑 CLI（或在没装 Cursor 的机器上用），手工流程：
 
 ```bash
 cd <your-project>
-python -m progress_report_bot init        # wizard
+python -m progress_report_bot init        # 交互向导（人手版）
 python -m progress_report_bot run-all     # safe: local md only
 ```
 

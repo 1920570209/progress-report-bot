@@ -29,31 +29,83 @@ enrichment cross-checks Feishu state with real commits / MRs.
 
 ## Quick Start (what the agent should do)
 
-Follow these steps in order. Stop and ask the user only if a required env value
-is missing or a destructive `--apply` is requested.
+Follow these steps in order. **Do NOT spawn the interactive `init` wizard** —
+that's a human-oriented CLI. As an AI agent with file-write capability, write
+`.env` directly.
 
-1. **Locate the user's project directory** (where Git history or business
-   context lives). `cd` there in a terminal call.
-2. **Initialize** (only if `.env` not present in that cwd):
-   ```bash
-   python -m progress_report_bot init
+### Step 1 — pick the working directory
+
+`cd` into the user's project directory (the one whose git history / Feishu
+space the user wants reported on). This is where `.env` and `data/` live.
+
+### Step 2 — make sure `.env` exists
+
+Read `./.env` in cwd. If it exists with `MEEGO_MCP_TOKEN` and
+`MEEGO_PROJECT_KEY` filled in, skip to Step 3.
+
+If it's missing or required fields are blank:
+
+1. **Ask the user (in one batched question)** for the missing values:
+   - `MEEGO_MCP_TOKEN` (required) — from Feishu Project → settings → MCP
+   - `MEEGO_PROJECT_KEY` (required) — Feishu space key (24-char hex)
+   - `MEEGO_REPORT_CARRIER_ID` (optional) — workitem id to receive the comment;
+     leave blank if the user only wants local md
+   - `DEFAULT_SCOPE` (optional, default `mine`) — `mine` / `project` / `all`
+   - `MEEGO_SCAN_TYPES` (only if scope=project|all, default `执行需求`)
+2. **Detect git form by listing cwd** (no need to run a command):
+   - ≥2 child dirs each containing `.git` → `GIT_PROVIDER=local` + `LOCAL_GIT_REPO_ROOT=<cwd>`
+   - cwd itself contains `.git` → `GIT_PROVIDER=local` + `LOCAL_GIT_REPO_PATH=<cwd>`
+   - otherwise → `GIT_PROVIDER=none`
+3. **Write `./.env`** using the file-write tool. Template:
+   ```env
+   MEEGO_MCP_URL=https://project.feishu.cn/mcp_server/v1
+   MEEGO_MCP_TOKEN=<from user>
+   MEEGO_PROJECT_KEY=<from user>
+   MEEGO_REPORT_CARRIER_ID=<from user or blank>
+   MEEGO_REPORT_CARRIER_TYPE_KEY=684a81a489c47be26942c57e
+   DEFAULT_SCOPE=<mine|project|all>
+   MEEGO_SCAN_TYPES=执行需求
+   GIT_PROVIDER=<local|none>
+   LOCAL_GIT_REPO_PATH=<cwd if single repo>
+   LOCAL_GIT_REPO_ROOT=<cwd if container>
+   LOCAL_GIT_REMOTE_PREFIX=origin/
+   MERGE_TARGET_BRANCHES=test
+   SYNC_SOURCE_NODE_NAME=功能开发
+   SYNC_TARGET_NODE_NAMES=功能测试,提测,测试中
+   SYNC_BRANCH_WHITELIST=
+   REPORT_WINDOW_DAYS=7
    ```
-   The wizard auto-detects git form (container / single repo / none) and writes
-   `.env` next to it. Required env: `MEEGO_MCP_TOKEN`, `MEEGO_PROJECT_KEY`.
-3. **Verify connectivity**:
-   ```bash
-   python -m progress_report_bot ping
-   ```
-4. **Generate the report locally (safe default — never writes Feishu)**:
-   ```bash
-   python -m progress_report_bot run-all
-   ```
-   Produces `data/report.md` + `data/diff.md` + `data/snapshot.json`. Read them
-   and surface the headline / risks / discrepancies to the user.
-5. **Only when user explicitly confirms**, post the comment back to Feishu:
-   ```bash
-   python -m progress_report_bot run-all --apply
-   ```
+
+### Step 3 — verify connectivity (5 sec)
+
+Run once, abort if it fails:
+
+```bash
+python -m progress_report_bot ping
+```
+
+### Step 4 — generate the report locally (safe, no Feishu write)
+
+```bash
+python -m progress_report_bot run-all
+```
+
+Then **read `data/report.md` and `data/diff.md`** and reply to the user with:
+
+- the one-line headline (completion %, delayed count, risk count)
+- top 3 🔴 critical discrepancies if any
+- 3-5 most relevant `@`-mentioned owners
+
+Do NOT paste the full markdown unless asked.
+
+### Step 5 — only if user explicitly asks "post it / push to Feishu"
+
+```bash
+python -m progress_report_bot run-all --apply
+```
+
+Confirm again before running `--apply`. Never assume permission from "looks
+good" — require an explicit "post" / "send" / "推送" / "发评论".
 
 ## Two run modes (auto-selected by `init`)
 
