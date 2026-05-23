@@ -1,0 +1,51 @@
+# 🔀 {{ diff.project_name }} · 飞书 ↔ Git 对账
+
+> 自动检测「飞书项目状态」与「Git 实际进度」的不一致项。
+>
+> 生成时间：{{ generated_at_str }} | 时间窗口：最近 {{ diff.window_days }} 天
+
+## 总览
+
+| 指标 | 数值 |
+|---|---|
+| 扫描工作项 | {{ diff.scanned_total }} |
+| ├─ 已填开发分支 | {{ diff.scanned_with_branch }} |
+| └─ 已联通 Git | {{ diff.scanned_with_git }} |
+| **差异总数** | **{{ diff.discrepancies | length }}** |
+| 🔴 critical | {{ diff.critical_count }} |
+| 🟡 warning | {{ diff.warning_count }} |
+| 🔵 info | {{ diff.info_count }} |
+
+{% if not diff.discrepancies %}
+---
+
+## ✅ 一致性结论
+
+飞书项目状态与 Git 实际进度**完全一致**，无差异。
+
+{% else %}
+---
+
+## 差异明细
+
+{% for d in diff.discrepancies %}
+### {{ loop.index }}. {{ sev_icon[d.severity] }} [{{ kind_labels[d.kind] }}] {{ d.work_item.work_item_name }}
+
+- **工作项**：#{{ d.work_item.work_item_id }} · 节点 `{{ d.work_item.current_node_name }}` / `{{ d.work_item.current_node_status }}`
+- **负责人**：{{ d.work_item.primary_owner.name if d.work_item.primary_owner else "—" }}
+- **飞书侧信号**：{{ d.feishu_signal or "—" }}
+- **Git 侧信号**：{{ d.git_signal or "—" }}
+- **建议动作**：{{ d.suggested_action or "—" }}
+{% if d.git and d.git.pull_requests %}
+- **相关 MR**：
+{% for p in d.git.pull_requests[:3] %}
+  - !{{ p.number }} `{{ p.head_branch }} → {{ p.base_branch }}` · {{ p.state }}{% if p.merged %} (merged){% endif %} · {{ p.title[:50] }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+{% endif %}
+
+---
+
+_由 progress-report-bot diff 自动生成。_

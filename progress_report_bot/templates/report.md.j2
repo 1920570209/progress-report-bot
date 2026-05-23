@@ -1,0 +1,147 @@
+# 📊 {{ report.project_name }} 周报
+
+> {{ report.summary_oneline }}
+>
+> 生成时间：{{ generated_at_str }} | 时间窗口：最近 {{ report.window_days }} 天 | 数据源：飞书 Meego{% if has_git %} + Git{% endif %}
+
+---
+
+## 一句话总结
+
+**{{ report.summary_oneline }}**
+
+| 指标 | 数值 |
+|---|---|
+| 已完成 | **{{ report.done_count }}** |
+| 总工作项 | {{ report.total_count }} |
+| 完成率 | **{{ pct }}%** |
+| 延期项 | {{ report.delayed_items | length }} |
+| 风险项 | {{ report.risks | length }} |
+{% if has_git %}
+| 本周代码提交 | {{ report.git_total_commits }} |
+| 本周合并 PR | {{ report.git_total_prs_merged }} |
+{% endif %}
+
+{% if has_risks %}
+---
+
+## ⚠ 风险 Top {{ report.risks | length }}
+
+{% for r in report.risks %}
+- {% if r.severity == "critical" %}🔴{% elif r.severity == "warning" %}🟡{% else %}🔵{% endif %} **{{ r.work_item.work_item_name }}**
+  - 当前节点：`{{ r.work_item.current_node_name }}`
+  - 原因：{{ r.reason }}
+  - 负责人：{{ r.work_item.primary_owner.name if r.work_item.primary_owner else "—" }}
+  - 开发分支：`{{ r.work_item.branch or "（未填）" }}`
+{% endfor %}
+{% endif %}
+
+{% if has_delayed %}
+---
+
+## ⏰ 延期项明细
+
+| # | 工作项 | 节点 | 负责人 | 开发分支 |
+|---|---|---|---|---|
+{% for w in report.delayed_items %}
+| {{ w.work_item_id }} | {{ w.work_item_name }} | {{ w.current_node_name }} | {{ w.primary_owner.name if w.primary_owner else "—" }} | `{{ w.branch or "—" }}` |
+{% endfor %}
+{% endif %}
+
+{% if has_progress %}
+---
+
+## 📋 本周需求进度
+
+{% if report.progress.completed %}
+### 🚀 本周完成节点（{{ report.progress.completed | length }} 项）
+
+{% for l in report.progress.completed %}
+- **#{{ l.work_item.work_item_id }} {{ l.work_item.work_item_name }}**
+  - {{ l.headline }}
+  {% if l.detail %}
+  - {{ l.detail | join(' · ') }}
+  {% endif %}
+{% endfor %}
+{% endif %}
+
+{% if report.progress.active %}
+### 🏃 推进中（{{ report.progress.active | length }} 项）
+
+{% for l in report.progress.active %}
+- {% if l.is_delayed %}⏰ {% endif %}**#{{ l.work_item.work_item_id }} {{ l.work_item.work_item_name }}**
+  - {{ l.headline }}
+  {% if l.detail %}
+  - {{ l.detail | join(' · ') }}
+  {% endif %}
+{% endfor %}
+{% endif %}
+
+{% if report.progress.pending_count %}
+### 📥 待启动（{{ report.progress.pending_count }} 项）
+
+{% for l in report.progress.pending_sample %}
+- #{{ l.work_item.work_item_id }} {{ l.work_item.work_item_name }} · {{ l.work_item.primary_owner.name if l.work_item.primary_owner else "—" }}
+{% endfor %}
+{% if report.progress.pending_count > report.progress.pending_sample | length %}
+- _…另有 {{ report.progress.pending_count - (report.progress.pending_sample | length) }} 项未启动_
+{% endif %}
+{% endif %}
+{% endif %}
+
+{% if has_owners %}
+---
+
+## 👥 团队贡献
+
+| 负责人 | 已完成 | 进行中 | 延期 |
+|---|---|---|---|
+{% for l in report.owner_lines %}
+| {{ l.owner.name }} | {{ l.done_count }} | {{ l.todo_count }} | {{ l.delayed_count }} |
+{% endfor %}
+{% endif %}
+
+{% if has_git %}
+---
+
+## 💻 代码进度（Git 验证）
+
+| 工作项 | 分支 | Commits | Merged MR | Open MR |
+|---|---|---|---|---|
+{% for e in report.git_items %}
+| #{{ e.work_item.work_item_id }} {{ e.work_item.work_item_name[:30] }} | `{{ e.git.branch }}` | {{ e.git.commit_count }} | {{ e.git.merged_pr_count }} | {{ e.git.open_pr_count }} |
+{% endfor %}
+{% endif %}
+
+{% if has_diff %}
+---
+
+## 🔀 飞书 ↔ Git 一致性对账
+
+| 指标 | 数值 |
+|---|---|
+| 扫描 | {{ report.diff.scanned_total }} 项（含分支 {{ report.diff.scanned_with_branch }} / 已联通 Git {{ report.diff.scanned_with_git }}） |
+| 差异 | **{{ report.diff.discrepancies | length }}** 项 |
+| 🔴 critical | {{ report.diff.critical_count }} |
+| 🟡 warning | {{ report.diff.warning_count }} |
+| 🔵 info | {{ report.diff.info_count }} |
+
+{% if report.diff.discrepancies %}
+**Top {{ [report.diff.discrepancies | length, 5] | min }} 差异：**
+
+{% for d in report.diff.discrepancies[:5] %}
+- {{ sev_icon[d.severity] }} **[{{ kind_labels[d.kind] }}]** {{ d.title }}
+  - 飞书：{{ d.feishu_signal or "—" }}
+  - Git：{{ d.git_signal or "—" }}
+  - 建议：{{ d.suggested_action or "—" }}
+{% endfor %}
+
+> 详细对账见 `data/diff.md`。
+{% else %}
+✅ 飞书状态与 Git 实际**完全一致**，无差异。
+{% endif %}
+{% endif %}
+
+---
+
+_由 progress-report-bot 自动生成。_

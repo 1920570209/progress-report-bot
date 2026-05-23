@@ -1,0 +1,65 @@
+**📊 {{ report.project_name }} 周报**（最近 {{ report.window_days }} 天）
+
+> {{ report.summary_oneline }}
+
+**进度**：✅ 完成 {{ report.done_count }} / {{ report.total_count }} 项（**{{ pct }}%**）
+{% if has_delayed %}
+**延期**：⏰ {{ report.delayed_items | length }} 项
+{% endif %}
+{% if has_git %}
+**代码**：💻 {{ report.git_total_commits }} commits，{{ report.git_total_prs_merged }} merged PR
+{% endif %}
+
+{% if has_risks %}
+---
+**⚠ 风险 Top {{ report.risks | length }}**
+{% for r in report.risks %}
+- {% if r.severity == "critical" %}🔴{% else %}🟡{% endif %} **{{ r.work_item.work_item_name }}** —— {{ r.reason }}（{{ r.work_item.primary_owner.name if r.work_item.primary_owner else "—" }}{% if r.work_item.branch %}, `{{ r.work_item.branch }}`{% endif %}）
+{% endfor %}
+{% endif %}
+
+{% if has_progress %}
+---
+**📋 本周需求进度**
+{% if report.progress.completed %}
+
+✅ 本周完成节点（{{ report.progress.completed | length }}）：
+{% for l in report.progress.completed[:5] %}
+- #{{ l.work_item.work_item_id }} {{ l.work_item.work_item_name[:32] }} — {{ l.headline }}{% if l.detail %}（{{ l.detail | join('，') }}）{% endif %}
+{% endfor %}
+{% endif %}
+{% if report.progress.active %}
+
+🏃 推进中（{{ report.progress.active | length }}）：
+{% for l in report.progress.active[:5] %}
+- {% if l.is_delayed %}⏰ {% endif %}#{{ l.work_item.work_item_id }} {{ l.work_item.work_item_name[:32] }} — {{ l.headline }}{% if l.detail %}（{{ l.detail | join('，') }}）{% endif %}
+{% endfor %}
+{% endif %}
+{% if report.progress.pending_count %}
+
+📥 待启动：{{ report.progress.pending_count }} 项
+{% endif %}
+{% endif %}
+
+{% if has_owners %}
+---
+**👥 本周贡献**
+{% for l in report.owner_lines %}
+- {{ l.owner.name }}：完成 {{ l.done_count }}{% if l.todo_count %}，进行中 {{ l.todo_count }}{% endif %}{% if l.delayed_count %}，⏰延期 {{ l.delayed_count }}{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if has_diff and report.diff.discrepancies %}
+---
+**🔀 飞书 ↔ Git 对账**（差异 {{ report.diff.discrepancies | length }} 项：🔴{{ report.diff.critical_count }} · 🟡{{ report.diff.warning_count }} · 🔵{{ report.diff.info_count }}）
+{% for d in report.diff.discrepancies[:3] %}
+- {{ sev_icon[d.severity] }} **[{{ kind_labels[d.kind] }}]** {{ d.title }}
+{% endfor %}
+{% endif %}
+
+{% if report.mentions %}
+---
+{% for p in report.mentions %}<at id="{{ p.user_key }}">@{{ p.name }}</at> {% endfor %}请关注本周风险与待办。
+{% endif %}
+
+_progress-report-bot · {{ generated_at_str }}_

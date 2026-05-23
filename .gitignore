@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project-local
+.env
+.env.local
+# 所有生成产物（含真实工作项数据）都不入库，只保留 .gitkeep 占位
+data/*
+!data/.gitkeep
+*.log
+.tmp_*
+
+# Ad-hoc probe artifacts
+gl_user.json
+*.probe.json
+
+# Internal design notes — keep local only (contains real names / IDs / business context)
+DESIGN.md

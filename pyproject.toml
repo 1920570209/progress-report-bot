@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "progress-report-bot"
+version = "0.1.0"
+description = "Pull version progress from Feishu Project (Meego), enrich with GitHub, auto-generate report and push to owner via MCP add_comment."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = [
+    "Jinja2>=3.0,<4.0",
+    "python-dotenv>=1.0,<2.0",
+]
+
+[project.scripts]
+progress-report-bot = "progress_report_bot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["progress_report_bot*"]
+
+[tool.setuptools.package-data]
+progress_report_bot = ["templates/*.j2"]
